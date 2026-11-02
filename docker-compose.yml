@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: adana_postgres
+
+    environment:
+      POSTGRES_USER: adana_proj
+      POSTGRES_PASSWORD: adana_proj
+      POSTGRES_DB: adana_proj
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adana_proj -d adana_proj"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: adana_api
+
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

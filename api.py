@@ -16,6 +16,7 @@ class DishIn(BaseModel):
     description: str
     price: Decimal  # Изменено с float на Decimal
     mass: float
+    category_id: int
 
 class CategoryIn(BaseModel):
     name: str
@@ -28,14 +29,14 @@ class CategoryOut(BaseModel):
         from_attributes = True
 
 class DishOut(BaseModel):
-    id: int  # Полезно отдавать ID блюда
+    id: int
     name: str
     description: str
-    price: Decimal  # Изменено с float на Decimal
+    price: Decimal
     mass: float
+    category_id: int
 
     class Config:
-        # Позволяет Pydantic читать данные прямо из объектов SQLAlchemy
         from_attributes = True
 
 
