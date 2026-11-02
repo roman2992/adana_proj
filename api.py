@@ -56,6 +56,17 @@ async def dishes(db: AsyncSession = Depends(get_db)):
 
     return dishes_list
 
+@app.get("/categories/", response_model=list[CategoryOut])
+async def dishes(db: AsyncSession = Depends(get_db)):
+    # ИСПРАВЛЕНО: Правильный метод для получения списка объектов в SQLAlchemy 2.0
+    result = await db.execute(select(Category))
+    categories_list = result.scalars().all()
+
+    if not categories_list:
+        raise HTTPException(status_code=404, detail="Categories not found")
+
+    return categories_list
+
 
 @app.post("/dishes/", response_model=DishOut)
 async def add_dish(
