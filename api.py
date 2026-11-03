@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from database import get_db
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import Dish, Category
+from models import Dish, Category, Order
 
 app = FastAPI()
 
@@ -92,3 +92,9 @@ async def add_category(
     await db.commit()
     await db.refresh(new_category)
     return new_category  # Возвращаем созданный объект обратно клиенту
+
+# @app.post("/orders/", response_model=OrderOut):
+#     new_order = Order(OrderOut.model_dump())
+#     await db.commit()
+#     await db.refresh(new_order)
+#     return new_order
