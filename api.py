@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from database import get_db
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import Dish, Category, Order
+from models import Dish, Category, Order, Client
 
 app = FastAPI()
 
@@ -73,7 +73,6 @@ async def add_dish(
         data: DishIn,
         db: AsyncSession = Depends(get_db)
 ):
-    # ИСПРАВЛЕНО: Создаем объект модели SQLAlchemy (Dish), а не Pydantic (DishIn)
     new_dish = Dish(**data.model_dump())
 
     db.add(new_dish)
@@ -93,8 +92,35 @@ async def add_category(
     await db.refresh(new_category)
     return new_category  # Возвращаем созданный объект обратно клиенту
 
-# @app.post("/orders/", response_model=OrderOut):
-#     new_order = Order(OrderOut.model_dump())
-#     await db.commit()
-#     await db.refresh(new_order)
-#     return new_order
+class ClientIn(BaseModel):
+    name: str
+    phone: str
+    class Config:
+        from_attributes = True
+
+class ClientOut(BaseModel):
+    id: int
+    name: str
+    phone: str
+    class Config:
+        from_attributes = True
+
+@app.post("/clients/", response_model=ClientOut)
+async def add_client(
+    data: ClientIn,
+    db: AsyncSession = Depends(get_db)
+):
+    new_client = Client(**data.model_dump())
+    db.add(new_client)
+    await db.commit()
+    await db.refresh(new_client)
+    return new_client
+
+
+@app.get("/clients/", response_model=list[ClientOut])
+async def clients(
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(Client))
+    clients_list = result.scalars().all()
+    return clients_list
