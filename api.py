@@ -4,7 +4,9 @@ from pydantic import BaseModel, Field
 from database import get_db
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import Dish, Category, Order, Client, OrderStatus, OrderLine
+from models import Role, Dish, Category, Order, User, OrderStatus, OrderLine
+from security import hash_password, verify_password, create_access_token
+from dependencies import current_user
 
 app = FastAPI()
 
@@ -45,6 +47,41 @@ class DishOut(BaseModel):
 async def welcome() -> dict:
     return {"message": "Hello, Adana!"}
 
+
+class AuthIn(BaseModel):
+    phone: str
+    password:str = Field(min_length=7)
+    role:Role = Role.CUSTOMER
+    name: str
+
+
+@app.post("/auth/register")
+async def register(data:AuthIn, db:AsyncSession = Depends(get_db)):
+    if await db.scalar(select(User).where(User.phone==data.phone)):
+        raise HTTPException(409, "Phone already registered")
+    user = User(phone=data.phone,
+                password_hash=hash_password(data.password),
+                name=data.name,
+                role = data.role)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return {
+        "access_token":create_access_token(str(user.id),user.role),
+        "user_id":user.id,
+        "role":user.role
+    }
+
+@app.post("/auth/login")
+async def login(data:AuthIn, db:AsyncSession = Depends(get_db)):
+    user = await db.scalar(select(User).where(User.phone==data.phone))
+    if not user or not verify_password(data.password,user.password_hash):
+        raise HTTPException(401,"Invalid credentials")
+    return {
+        "access_token": create_access_token(str(user.id), user.role),
+        "user_id": user.id,
+        "role": user.role
+    }
 
 @app.get("/dishes/", response_model=list[DishOut])
 async def dishes(db: AsyncSession = Depends(get_db)):
@@ -111,7 +148,7 @@ async def add_client(
     data: ClientIn,
     db: AsyncSession = Depends(get_db)
 ):
-    new_client = Client(**data.model_dump())
+    new_client = User(**data.model_dump())
     db.add(new_client)
     await db.commit()
     await db.refresh(new_client)
@@ -122,7 +159,7 @@ async def add_client(
 async def clients(
     db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(Client))
+    result = await db.execute(select(User))
     clients_list = result.scalars().all()
     return clients_list
 
@@ -134,104 +171,77 @@ class OrderLineIn(BaseModel):
 class OrderIn(BaseModel):
     address: str
     order_phone_number: str
-    client_id: int
+    # client_id: int
     order_lines: list[OrderLineIn] = Field(min_length=1)
 
 @app.post("/orders/", status_code=201)
-async def add_order(
-        data:OrderIn,
-        db:AsyncSession = Depends(get_db)
+async def create_order(
+    data: OrderIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    # 1. Проверяем клиента
-    client_result = await db.execute(
-        select(Client).where(Client.id == data.client_id)
-    )
-    client = client_result.scalar_one_or_none()
+    # Общая стоимость заказа
+    total_price = Decimal("0.00")
 
-    if client is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Client not found"
-        )
-
-    # 2. Получаем статус "Новый"
-    status_result = await db.execute(
-        select(OrderStatus).where(OrderStatus.name == "Новый")
-    )
-    new_status = status_result.scalar_one_or_none()
-
-    if new_status is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Order status 'Новый' not found"
-        )
-
-    # 3. Получаем блюда из базы
-    dish_ids = [line.dish_id for line in data.order_lines]
-
-    dishes_result = await db.execute(
-        select(Dish).where(Dish.id.in_(dish_ids))
-    )
-    dishes = {
-        dish.id: dish
-        for dish in dishes_result.scalars().all()
-    }
-
-    # 4. Проверяем, что все блюда существуют
-    for line in data.order_lines:
-        if line.dish_id not in dishes:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Dish {line.dish_id} not found"
-            )
-    # 5. Создаём заказ
-    new_order = Order(
+    # Создаём заказ
+    order = Order(
+        total_price=total_price,
         address=data.address,
         order_phone_number=data.order_phone_number,
-        client_id=data.client_id,
-        created_at=datetime.now(timezone.utc),
-        status_id=new_status.id,
-        total_price=Decimal("0.00")
+        client_id=user.id,
+        status_id=1,
     )
-    try:
-        db.add(new_order)
 
-        # Получаем ID заказа, чтобы записать его в OrderLine
-        await db.flush()
-        # flush() отправляет SQL-команды в БД и позволяет получить new_order.id,
-        # но не завершает транзакцию.
+    db.add(order)
 
-        total_price = Decimal("0.00")
+    # Получаем ID созданного заказа
+    await db.flush()
 
-        # 6. Создаём позиции заказа
-        for line in data.order_lines:
-            dish = dishes[line.dish_id]
+    # Создаём позиции заказа
+    for item in data.order_lines:
 
-            # Сохраняем стоимость всей позиции на момент оформления заказа
-            line_price = Decimal(str(dish.price)) * line.amount
+        # Находим блюдо
+        dish = await db.scalar(
+            select(Dish).where(Dish.id == item.dish_id)
+        )
 
-            order_line = OrderLine(
-                order_id=new_order.id,
-                dish_id=dish.id,
-                amount=line.amount,
-                price=line_price
+        if dish is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Dish with id {item.dish_id} not found",
             )
 
-            db.add(order_line)
+        # Цена одной позиции
+        line_total = dish.price * item.amount
 
-            total_price += line_price
+        # Добавляем стоимость к общей сумме
+        total_price += line_total
 
-        # 7. Сохраняем итоговую сумму
-        new_order.total_price = total_price
+        # Создаём OrderLine
+        order_line = OrderLine(
+            order_id=order.id,
+            dish_id=dish.id,
+            amount=item.amount,
+            price=dish.price,
+        )
 
-        await db.commit()
-        await db.refresh(new_order)
+        db.add(order_line)
 
-    except Exception:
-        await db.rollback()
-        raise
+    # Записываем итоговую сумму в заказ
+    order.total_price = total_price
 
-    return new_order
+    # Сохраняем заказ и позиции
+    await db.commit()
+
+    # Обновляем данные заказа
+    await db.refresh(order)
+
+    return {
+        "order_id": order.id,
+        "total_price": order.total_price,
+        "status_id": order.status_id,
+        "message": "Order created successfully",
+    }
 
 
 # docker compose logs api --tail 100

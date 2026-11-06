@@ -1,12 +1,17 @@
-from sqlalchemy import String, ForeignKey, Numeric, Float, Integer, DateTime, CheckConstraint
+from sqlalchemy import (String, ForeignKey, Numeric,
+                        Float, Integer, DateTime, CheckConstraint, Text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from decimal import Decimal
 from typing import List
 from datetime import datetime, timezone
+from enum import Enum
 
 class Base(DeclarativeBase):
     pass
 
+class Role(str, Enum):
+    CUSTOMER = "CUSTOMER"
+    ADMIN = "ADMIN"
 
 class Category(Base):
     __tablename__ = "categories"
@@ -38,23 +43,28 @@ class Order(Base):
     address: Mapped[str] = mapped_column(String(160))
     order_phone_number: Mapped[str] = mapped_column(String(100))
 
-    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
+    client_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
                                                         default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status_id: Mapped[int] = mapped_column(ForeignKey("status.id"))
 
-    client: Mapped["Client"] = relationship(back_populates="orders")
+    client: Mapped["User"] = relationship(back_populates="orders")
     order_lines: Mapped[List["OrderLine"]] = relationship(back_populates="order")
     order_status: Mapped["OrderStatus"] = relationship()
 
-class Client(Base):
-    __tablename__ = "clients"
+class User(Base):
+    __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     phone: Mapped[str] = mapped_column(String(100))
 
     orders: Mapped[List["Order"]] = relationship(back_populates="client")
+
+    password_hash: Mapped[str]=mapped_column(Text())
+    role: Mapped[str]=mapped_column(String(16), default=Role.CUSTOMER.value)
+
+
 
 class OrderLine(Base):
     __tablename__ = "order_lines"
